@@ -44,6 +44,9 @@
 int elves(int, char **);
 int airballoon(int, char **);
 
+/* ASST1 TESTS */
+int threadjointest(int argc, char ** args);
+
 /* data structure tests */
 int arraytest(int, char **);
 int arraytest2(int, char **);

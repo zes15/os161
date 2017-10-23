@@ -36,16 +36,16 @@
  */
 
 #include <cdefs.h>
-
+#include <hangman.h>
 
 /* Inlining support - for making sure an out-of-line copy gets built */
 #ifndef SPINLOCK_INLINE
 #define SPINLOCK_INLINE INLINE
 #endif
 
-//#ifndef HANGMAN_H
-//#include <hangman.h>
-//#endif
+#ifndef HANGMAN_H
+#include <hangman.h>
+#endif
 
 /* Get the machine-dependent bits. */
 #include <machine/spinlock.h>

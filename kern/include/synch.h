@@ -80,7 +80,7 @@ struct lock {
 	struct spinlock lk_lock;
 	volatile struct thread * lk_holder;
 	volatile bool locked;
-	//HANGMAN_LOCKABLE(deadlock_handler);
+	HANGMAN_LOCKABLE(deadlk_handler);
 };
 
 struct lock *lock_create(const char *name);

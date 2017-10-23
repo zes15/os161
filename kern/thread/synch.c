@@ -155,7 +155,7 @@ lock_create(const char *name)
         }
 
         // add stuff here as needed
-	//HANGMAN_LOCKABLEINIT(&lock->deadlock_handler, lock->lk_name);
+	HANGMAN_LOCKABLEINIT(&lock->deadlk_handler, lock->lk_name);
 
 	// create our wait channel
         lock->lk_wchan = wchan_create(lock->lk_name);
@@ -211,14 +211,18 @@ lock_acquire(struct lock *lock)
 	
 	//KASSERT(lock->lk_holder != curthread);
 	
-	while(lock->lk_holder != NULL) //while(lock->locked)
+	while(lock->lk_holder != NULL) { /*while(lock->locked)*/
+		HANGMAN_WAIT(&curthread->t_hangman, &lock->deadlk_handler);
 		wchan_sleep(lock->lk_wchan, &lock->lk_lock);
+	}
 
 	KASSERT(lock->lk_holder == NULL);
 	
 	// update our lock holder and set bool to true
 	lock->locked = true;
 	lock->lk_holder = curthread;
+
+	HANGMAN_ACQUIRE(&curthread->t_hangman, &lock->deadlk_handler);
 
 	// release spinlock since we are done with volatile data
 	spinlock_release(&lock->lk_lock);
@@ -244,6 +248,8 @@ lock_release(struct lock *lock)
 		// owner releases the lock
 		lock->lk_holder = NULL;
 		lock->locked = false;
+
+		HANGMAN_RELEASE(&curthread->t_hangman, &lock->deadlk_handler);
 
 		// tells the next thread in the wchan the lock is available
 		wchan_wakeone(lock->lk_wchan, &lock->lk_lock);
@@ -339,13 +345,14 @@ cv_wait(struct cv *cv, struct lock *lock)
 
 	if(lock_do_i_hold(lock))
 	{
-		// release lock if we are already holding it
-		lock_release(lock);
 
 		// acquire a spinlock to use for wchan_sleep
 		spinlock_acquire(&cv->cv_splk);
 
-		// 
+		// release lock if we are already holding it
+		lock_release(lock);
+		
+		// put thread to sleep 
 		wchan_sleep(cv->cv_wchan, &cv->cv_splk);
 
 		// release spinlock

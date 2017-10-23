@@ -66,6 +66,10 @@ typedef enum {
 
 /* Thread structure. */
 struct thread {
+
+	/* deadlock detector*/
+	HANGMAN_ACTOR(t_hangman);
+
 	/*
 	 * These go up front so they're easy to get to even if the
 	 * debugger is messed up.
@@ -83,7 +87,7 @@ struct thread {
 	struct switchframe *t_context;	/* Saved register context (on stack) */
 	struct cpu *t_cpu;		/* CPU thread runs on */
 	struct proc *t_proc;		/* Process thread belongs to */
-
+	
 	/*
 	 * Interrupt state fields.
 	 *
@@ -146,6 +150,10 @@ void thread_shutdown(void);
 int thread_fork(const char *name, struct proc *proc,
                 void (*func)(void *, unsigned long),
                 void *data1, unsigned long data2);
+
+
+/* thread_join prototype */
+int thread_join(void);
 
 /*
  * Cause the current thread to exit.
