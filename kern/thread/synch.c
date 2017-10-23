@@ -155,17 +155,43 @@ lock_create(const char *name)
         }
 
         // add stuff here as needed
+	//HANGMAN_LOCKABLEINIT(&lock->deadlock_handler, lock->lk_name);
 
-        return lock;
+	// create our wait channel
+        lock->lk_wchan = wchan_create(lock->lk_name);
+        
+	// check for failures
+	if (lock->lk_wchan == NULL) {
+        	kfree(lock->lk_name);
+        	kfree(lock);
+        	return NULL;
+        }
+	
+	// init spinlock and claim no holder
+        spinlock_init(&lock->lk_lock);
+        lock->lk_holder = NULL;	
+        lock->locked = false;
+        
+	return lock;
 }
 
 void
 lock_destroy(struct lock *lock)
 {
+	// make sure our lock exists
         KASSERT(lock != NULL);
-
-        // add stuff here as needed
-
+	
+	// destroy wait channel
+	wchan_destroy(lock->lk_wchan);
+	
+	// claim no lock holder
+	lock->lk_holder = NULL;
+	lock->locked = false;
+	
+	// clean up our spin lock
+	spinlock_cleanup(&lock->lk_lock);
+	
+	// free our malloc'd memory
         kfree(lock->lk_name);
         kfree(lock);
 }
@@ -174,16 +200,58 @@ void
 lock_acquire(struct lock *lock)
 {
         // Write this
+        //(void)lock;  // suppress warning until code gets written
+	
+	// ensure our lock has a holder and we have no interrupt
+	KASSERT(lock != NULL);
+	KASSERT(curthread->t_in_interrupt==false);
 
-        (void)lock;  // suppress warning until code gets written
+	// acquire our spinlock around volatile data
+	spinlock_acquire(&lock->lk_lock);
+	
+	//KASSERT(lock->lk_holder != curthread);
+	
+	while(lock->lk_holder != NULL) //while(lock->locked)
+		wchan_sleep(lock->lk_wchan, &lock->lk_lock);
+
+	KASSERT(lock->lk_holder == NULL);
+	
+	// update our lock holder and set bool to true
+	lock->locked = true;
+	lock->lk_holder = curthread;
+
+	// release spinlock since we are done with volatile data
+	spinlock_release(&lock->lk_lock);
+
+	//*KASSERT(!lock_do_i_hold(lock));
 }
 
 void
 lock_release(struct lock *lock)
 {
         // Write this
+        //(void)lock;  // suppress warning until code gets written
+	
+	// verify our lock exists
+	KASSERT(lock != NULL);
 
-        (void)lock;  // suppress warning until code gets written
+	// only let the owner release the lock
+	if(lock_do_i_hold(lock))
+	{
+		// acquire spinlock before working w/ volatile data
+		spinlock_acquire(&lock->lk_lock);
+
+		// owner releases the lock
+		lock->lk_holder = NULL;
+		lock->locked = false;
+
+		// tells the next thread in the wchan the lock is available
+		wchan_wakeone(lock->lk_wchan, &lock->lk_lock);
+
+		// we are done working w/ volatile data
+		spinlock_release(&lock->lk_lock);
+	}
+	//KASSERT(lock->lk_holder == curthread);
 }
 
 bool
@@ -191,9 +259,22 @@ lock_do_i_hold(struct lock *lock)
 {
         // Write this
 
-        (void)lock;  // suppress warning until code gets written
-
-        return true; // dummy until code gets written
+        //(void)lock;  // suppress warning until code gets written
+        //return true; // dummy until code gets written
+	
+	// acquire spinlock since we are working w/ volatile data
+	spinlock_acquire(&lock->lk_lock);
+	
+	if(lock->lk_holder == curthread) {
+		spinlock_release(&lock->lk_lock);
+		// current thread is lock owner
+		return true;
+	}
+	else {
+		spinlock_release(&lock->lk_lock);
+		// current thread is not lock owner
+		return false;
+	}
 }
 
 ////////////////////////////////////////////////////////////
@@ -218,6 +299,17 @@ cv_create(const char *name)
         }
 
         // add stuff here as needed
+	
+	cv->cv_wchan = wchan_create(cv->cv_name);
+
+	if(cv->cv_wchan == NULL)
+	{
+		kfree(cv->cv_name);
+		kfree(cv);
+		return NULL;
+	}
+
+	spinlock_init(&cv->cv_splk);
 
         return cv;
 }
@@ -228,6 +320,8 @@ cv_destroy(struct cv *cv)
         KASSERT(cv != NULL);
 
         // add stuff here as needed
+	wchan_destroy(cv->cv_wchan);
+	spinlock_cleanup(&cv->cv_splk);
 
         kfree(cv->cv_name);
         kfree(cv);
@@ -237,22 +331,79 @@ void
 cv_wait(struct cv *cv, struct lock *lock)
 {
         // Write this
-        (void)cv;    // suppress warning until code gets written
-        (void)lock;  // suppress warning until code gets written
+        //(void)cv;    // suppress warning until code gets written
+        //(void)lock;  // suppress warning until code gets written
+	
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+
+	if(lock_do_i_hold(lock))
+	{
+		// release lock if we are already holding it
+		lock_release(lock);
+
+		// acquire a spinlock to use for wchan_sleep
+		spinlock_acquire(&cv->cv_splk);
+
+		// 
+		wchan_sleep(cv->cv_wchan, &cv->cv_splk);
+
+		// release spinlock
+		spinlock_release(&cv->cv_splk);
+		
+		// re-acquire lock
+		lock_acquire(lock);
+	}
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
         // Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+	
+
+	if(lock_do_i_hold(lock))
+	{
+		
+		// the associated lock must be locked
+		//KASSERT(lock->locked);
+
+		// acquire spinlock for wakeone
+		spinlock_acquire(&cv->cv_splk);
+		//spinlock_acquire(&lock->lk_lock);
+		
+		//wchan_wakeone(cv->cv_wchan, &lock->lk_lock);
+		wchan_wakeone(cv->cv_wchan, &cv->cv_splk);
+
+		// release spinlock
+		spinlock_release(&cv->cv_splk);
+		//spinlock_release(&lock->lk_lock);
+	}
+	
+	//(void)cv;    // suppress warning until code gets written
+	//(void)lock;  // suppress warning until code gets written
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
 	// Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	
+	KASSERT( cv != NULL);
+	KASSERT(lock != NULL);
+	if(lock_do_i_hold(lock)) {
+
+		spinlock_acquire(&cv->cv_splk);
+		//spinlock_acquire(&lock->lk_lock);
+		//wchan_wakeall(cv->cv_wchan, &lock->lk_lock);
+		wchan_wakeall(cv->cv_wchan, &cv->cv_splk);
+		spinlock_release(&cv->cv_splk);
+		//spinlock_release(&lock->lk_lock);
+	}
+	
+	//(void)cv;    // suppress warning until code gets written
+	//(void)lock;  // suppress warning until code gets written
 }
