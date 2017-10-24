@@ -113,6 +113,15 @@ struct thread {
 	bool t_did_reserve_buffers;	/* reserve_buffers() in effect */
 
 	/* add more here as needed */
+	int * parent;	
+	int thread_id;
+
+	struct cv * child_cv;
+	struct cv * parent_cv;
+	struct lock * child_lk;
+	struct lock * parent_lk;
+	
+	
 };
 
 /*
