@@ -69,6 +69,9 @@ static struct cpuarray allcpus;
 /* Used to wait for secondary CPUs to come online. */
 static struct semaphore *cpu_startup_sem;
 
+/* init thread id list */
+static struct t_id_list t_ids;
+
 ////////////////////////////////////////////////////////////
 
 /*
@@ -151,8 +154,54 @@ thread_create(const char *name)
 
 	/* If you add to struct thread, be sure to initialize here */
 
+	/* initialize deadlock detector */
+	HANGMAN_ACTORINIT(&thread->t_deadlock_detector, thread->t_name);
+	
+	/* init cvs and locks for thread join */
+	thread->parent_cv = NULL;
+	thread->parent_lk = NULL;	
+	thread->child_cv = cv_create("child thread cv");
+	thread->child_lk = lock_create("child thread lk");
+
+        thread->thread_id = 0;
+	thread->child_id = 0;
+        thread->child = NULL;
+//	thread->child_is_alive = true;
+
 	return thread;
 }
+
+
+/*
+ * thread_join joins child back with parent upon exit
+ * ALSO HANDLES BONUS g. Returns Thread ID
+ */
+
+int
+thread_join(void)
+{
+	/* acquire a lock before joining thread */
+	lock_acquire(curthread->child_lk);
+
+	/* wake up child thread */
+	cv_signal(curthread->child_cv, curthread->child_lk);
+
+	/* wait until thread_exit() is called */
+	curthread->child_id = -1;
+	while(curthread->child_id == -1)
+		cv_wait(curthread->child_cv, curthread->child_lk);
+
+	/* get child thread id */
+	int thread_id = curthread->child_id;
+	
+	/* release our lock */
+	lock_release(curthread->child_lk);
+
+	/* BONUS */	
+	return thread_id;
+}
+
+
 
 /*
  * Create a CPU structure. This is used for the bootup CPU and
@@ -241,6 +290,7 @@ cpu_create(unsigned hardware_number)
 		curthread->t_cpu = curcpu;
 		curcpu->c_curthread = curthread;
 	}
+
 
 	result = proc_addthread(kproc, c->c_curthread);
 	if (result) {
@@ -550,6 +600,137 @@ thread_fork(const char *name,
 	return 0;
 }
 
+/* my fork, joins threads upon creation: used for thread_join  */
+int
+my_fork(const char *name,
+	    struct proc *proc,
+	    void (*entrypoint)(void *data1, unsigned long data2),
+	    void *data1, unsigned long data2)
+{
+	struct thread *newthread;
+	int result;
+
+	newthread = thread_create(name);
+	if (newthread == NULL) {
+		return ENOMEM;
+	}
+
+	/* Allocate a stack */
+	newthread->t_stack = kmalloc(STACK_SIZE);
+	if (newthread->t_stack == NULL) {
+		thread_destroy(newthread);
+		return ENOMEM;
+	}
+	thread_checkstack_init(newthread);
+
+	/*
+	 * Now we clone various fields from the parent thread.
+	 */
+
+	/* Thread subsystem fields */
+	newthread->t_cpu = curthread->t_cpu;
+
+	/* Attach the new thread to its process */
+	if (proc == NULL) {
+		proc = curthread->t_proc;
+	}
+	result = proc_addthread(proc, newthread);
+	if (result) {
+		/* thread_destroy will clean up the stack */
+		thread_destroy(newthread);
+		return result;
+	}
+
+	
+	/* acquire a thread id for newly forked thread */
+	newthread->thread_id = acquire_tid();
+	//newthread->child_is_alive = true;
+	
+	/* share lock with our child */
+	newthread->parent_cv = curthread->child_cv;
+	newthread->parent_lk = curthread->child_lk;
+	
+	/* keep track of our child's thread id */
+	newthread->child = &curthread->child_id;
+
+	/*
+	 * Because new threads come out holding the cpu runqueue lock
+	 * (see notes at bottom of thread_switch), we need to account
+	 * for the spllower() that will be done releasing it.
+	 */
+	newthread->t_iplhigh_count++;
+
+	/* Set up the switchframe so entrypoint() gets called */
+	switchframe_init(newthread, entrypoint, data1, data2);
+
+	/* Lock the current cpu's run queue and make the new thread runnable */
+	thread_make_runnable(newthread, false);
+
+	return 0;
+}
+
+
+/* acquire_tid is used to retrieve a new thread id    *
+ * from the list of available thread ids. In thread.h *
+ * we define the max # of threads to be 500. After    *
+ * 500 thread ids have been given out, we will start  *
+ * back at thread id 1 to save space since our ram is *
+ * limited on OS161				      */
+
+int
+acquire_tid(void)
+{
+    spinlock_acquire(&t_ids.splk);
+    
+	/* keep track of which thread id to serve */
+        int thread_id = t_ids.tail;
+    
+	while(++thread_id != t_ids.tail) {
+		
+	    /* reset back at thread id 1 when max thread # is reached */
+	    if (thread_id == MAX_T_NUM)
+		thread_id = 1;
+
+	    /* acquire next ID */
+            if (t_ids.acquired_ids[thread_id] == false) {
+	
+		/* label ID as required in thread ID list */
+                t_ids.acquired_ids[thread_id] = true;
+	
+		/* update thread id counter */
+                t_ids.tail = thread_id;
+
+                spinlock_release(&t_ids.splk);
+                return thread_id;
+        }
+    }
+    spinlock_release(&t_ids.splk);
+    return 0;
+}
+
+void
+free_tid(int thread_id)
+{
+	/* dont free threads with no id */	
+	if(thread_id == 0) {
+		return;
+	}
+
+	spinlock_acquire(&t_ids.splk);
+
+	/* mark id as free so it can be assigned to a new thread */
+	t_ids.acquired_ids[thread_id] = false;
+
+	/* roll back thread ID counter */
+	if(thread_id < t_ids.tail) {
+		thread_id--;
+		if(!(thread_id<1)) {
+			t_ids.tail = thread_id-1;
+		}
+	}
+	spinlock_release(&t_ids.splk);
+}
+
 /*
  * High level, machine-independent context switch code.
  *
@@ -781,16 +962,44 @@ thread_startup(void (*entrypoint)(void *data1, unsigned long data2),
 void
 thread_exit(void)
 {
-	struct thread *cur;
+	struct thread * cur;
 
 	cur = curthread;
 
 	KASSERT(cur->t_did_reserve_buffers == false);
 
+	/* keep track of thread id so we can free it later */
+	int curthread_id = cur->thread_id;
+
+	if (cur->thread_id){
+        	lock_acquire(cur->parent_lk);
+
+		/* wait for our child to be ready to exit */
+        	while(*cur->child != -1) {
+            		cv_wait(cur->parent_cv, cur->parent_lk);
+		}
+		
+		/* get our child's thread ID */
+        	*cur->child = cur->thread_id;
+
+		/* notify our parent */
+        	cv_broadcast(cur->parent_cv, cur->parent_lk);
+        	lock_release(cur->parent_lk);
+        }
+
+	cv_destroy(cur->child_cv);
+	lock_destroy(cur->child_lk);
+     
+    	/* free thread id and add it back to list of available tids */
+    	free_tid(curthread_id);
+
+  	/* set that thread is ready to be destroyed */
+    	//cur->child_is_alive = false;	
+
 	/*
-	 * Detach from our process. You might need to move this action
-	 * around, depending on how your wait/exit works.
-	 */
+	* Detach from our process. You might need to move this action
+	* around, depending on how your wait/exit works.
+	*/
 	proc_remthread(cur);
 
 	/* Make sure we *are* detached (move this only if you're sure!) */

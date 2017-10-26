@@ -64,11 +64,19 @@ typedef enum {
 	S_ZOMBIE,	/* zombie; exited but not yet deleted */
 } threadstate_t;
 
+/* max number of threads that can be assigned */
+#define MAX_T_NUM 500
+
+/* list of thread ids */
+struct t_id_list {
+	struct spinlock splk;
+	bool acquired_ids[MAX_T_NUM];
+	int tail;
+};
+
 /* Thread structure. */
 struct thread {
 
-	/* deadlock detector*/
-	HANGMAN_ACTOR(t_hangman);
 
 	/*
 	 * These go up front so they're easy to get to even if the
@@ -112,15 +120,22 @@ struct thread {
 	/* VFS */
 	bool t_did_reserve_buffers;	/* reserve_buffers() in effect */
 
-	/* add more here as needed */
-	int * parent;	
-	int thread_id;
 
+	/* add more here as needed */
+	
+	/* deadlock detector*/
+	HANGMAN_ACTOR(t_deadlock_detector);
+	
+	/* thread join data */
+	volatile int * child;
+	volatile int child_id;	
+	//volatile bool child_is_alive;
+
+	int thread_id;
 	struct cv * child_cv;
 	struct cv * parent_cv;
 	struct lock * child_lk;
 	struct lock * parent_lk;
-	
 	
 };
 
@@ -161,9 +176,15 @@ int thread_fork(const char *name, struct proc *proc,
                 void *data1, unsigned long data2);
 
 
-/* thread_join prototype */
+/* thread_join prototypes */
 int thread_join(void);
+int acquire_tid(void);
+void free_tid(int id);
 
+/* my fork prototype */
+int my_fork(const char *name, struct proc *proc,
+                void (*func)(void *, unsigned long),
+                void *data1, unsigned long data2);
 /*
  * Cause the current thread to exit.
  * Interrupts need not be disabled.

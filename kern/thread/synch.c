@@ -155,6 +155,8 @@ lock_create(const char *name)
         }
 
         // add stuff here as needed
+
+	/* init our deadlock detector */
 	HANGMAN_LOCKABLEINIT(&lock->deadlk_handler, lock->lk_name);
 
 	// create our wait channel
@@ -336,16 +338,10 @@ cv_destroy(struct cv *cv)
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
-        // Write this
-        //(void)cv;    // suppress warning until code gets written
-        //(void)lock;  // suppress warning until code gets written
-	
 	KASSERT(cv != NULL);
 	KASSERT(lock != NULL);
 
-	if(lock_do_i_hold(lock))
-	{
-
+	if(lock_do_i_hold(lock)) {
 		// acquire a spinlock to use for wchan_sleep
 		spinlock_acquire(&cv->cv_splk);
 
@@ -366,51 +362,24 @@ cv_wait(struct cv *cv, struct lock *lock)
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-        // Write this
-	
 	KASSERT(cv != NULL);
 	KASSERT(lock != NULL);
-	
-
-	if(lock_do_i_hold(lock))
-	{
-		
-		// the associated lock must be locked
-		//KASSERT(lock->locked);
-
-		// acquire spinlock for wakeone
+	if(lock_do_i_hold(lock)) {
 		spinlock_acquire(&cv->cv_splk);
-		//spinlock_acquire(&lock->lk_lock);
-		
-		//wchan_wakeone(cv->cv_wchan, &lock->lk_lock);
 		wchan_wakeone(cv->cv_wchan, &cv->cv_splk);
-
-		// release spinlock
 		spinlock_release(&cv->cv_splk);
-		//spinlock_release(&lock->lk_lock);
 	}
-	
-	//(void)cv;    // suppress warning until code gets written
-	//(void)lock;  // suppress warning until code gets written
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	// Write this
-	
 	KASSERT( cv != NULL);
 	KASSERT(lock != NULL);
 	if(lock_do_i_hold(lock)) {
 
 		spinlock_acquire(&cv->cv_splk);
-		//spinlock_acquire(&lock->lk_lock);
-		//wchan_wakeall(cv->cv_wchan, &lock->lk_lock);
 		wchan_wakeall(cv->cv_wchan, &cv->cv_splk);
 		spinlock_release(&cv->cv_splk);
-		//spinlock_release(&lock->lk_lock);
 	}
-	
-	//(void)cv;    // suppress warning until code gets written
-	//(void)lock;  // suppress warning until code gets written
 }
