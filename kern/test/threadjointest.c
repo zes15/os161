@@ -61,6 +61,7 @@ static void entrypoint_for_my_fork(void * ignore, unsigned long i)
 	
 	/* print our thread id */
 	kprintf("Forking thread ID %ld\n", i);
+	thread_exit();
 }
 
 
@@ -74,11 +75,13 @@ int threadjointest(int argc, char ** args)
    for(int j = 0; j < NLOOPS; j ++) {
 	
 	for(int i = 1; i <= NTHREADS; i++) {
+		lock_acquire(t_join_lk);
 		int error = my_fork("worker", NULL, entrypoint_for_my_fork, \
 				    NULL, i);
 		if(error) {
 			panic("Thread fork failed %s\n", strerror(error));
 		}
+		lock_release(t_join_lk);
 	}
 	
 	for(int i = 1; i <=  NTHREADS; i++) {
