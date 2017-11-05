@@ -30,10 +30,12 @@
 #include <types.h>
 #include <kern/errno.h>
 #include <kern/syscall.h>
+#include <endian.h>
 #include <lib.h>
 #include <mips/trapframe.h>
 #include <thread.h>
 #include <current.h>
+#include <copyinout.h>
 #include <syscall.h>
 
 
@@ -114,7 +116,25 @@ syscall(struct trapframe *tf)
                 panic("Returning from exit\n");
                 break;
 
-	    /* Add stuff here */
+            /* Sample cases: open and read */
+            case SYS_open:
+                err = sys_open(
+                        (userptr_t)tf->tf_a0,
+                        tf->tf_a1,
+                        tf->tf_a2,
+                        &retval);
+                break;
+
+            case SYS_read:
+                err = sys_read(
+                        tf->tf_a0,
+                        (userptr_t)tf->tf_a1,
+                        tf->tf_a2,
+                        &retval);
+                break;
+
+            /* Project 3:
+             * Add more for meld, close, and write . */
 
 	    default:
 		kprintf("Unknown syscall %d\n", callno);

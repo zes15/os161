@@ -43,11 +43,13 @@
  */
 
 #include <types.h>
+#include <kern/errno.h>
 #include <spl.h>
 #include <proc.h>
 #include <current.h>
 #include <addrspace.h>
 #include <vnode.h>
+#include <filetable.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -81,6 +83,7 @@ proc_create(const char *name)
 
 	/* VFS fields */
 	proc->p_cwd = NULL;
+	proc->p_filetable = NULL;
 
 	return proc;
 }
@@ -116,6 +119,10 @@ proc_destroy(struct proc *proc)
 		VOP_DECREF(proc->p_cwd);
 		proc->p_cwd = NULL;
 	}
+        if (proc->p_filetable) {
+                filetable_destroy(proc->p_filetable);
+                proc->p_filetable = NULL;
+        }
 
 	/* VM fields */
 	if (proc->p_addrspace) {
@@ -227,21 +234,21 @@ proc_create_runprogram(const char *name)
 void
 proc__exit(int status)
 {
-        struct proc *proc = curproc;
+       struct proc *proc = curproc;
 
-        /* The kernel isn't supposed to exit. */
-        KASSERT(proc != kproc);
+       /* The kernel isn't supposed to exit. */
+       KASSERT(proc != kproc);
 
-        kprintf("Proc exit status %d \n", status);
-        /* Detach from the process and attach to the kernel process. */
-        KASSERT(curthread->t_proc == proc);
-        proc_remthread(curthread);
-        proc_addthread(kproc, curthread);
+       kprintf("Proc exit status %d \n", status);
+       /* Detach from the process and attach to the kernel process. */
+       KASSERT(curthread->t_proc == proc);
+       proc_remthread(curthread);
+       proc_addthread(kproc, curthread);
 
-        /* Now we can destroy the process. */
-        proc_destroy(proc);
+       /* Now we can destroy the process. */
+       proc_destroy(proc);
 
-        thread_exit();
+       thread_exit();
 }
 
 /*

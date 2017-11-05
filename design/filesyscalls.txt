@@ -1,0 +1,72 @@
+Notes for file system calls 
+-------------------------------------------------------------------------
+
+This project covers the following:
+
+   - File system calls: open, read, write, close, meld
+
+The system calls are actually called from arch/mips/mips/syscall.c.
+Pointer arguments are cast to userptr_t or const_userptr_t in order to
+use the compiler to help prevent accidentally dereferencing user-
+supplied pointers without calling copyin/copyout/copyinstr/copyoutstr
+properly. const_userptr_t, where suitable, also helps protect against
+getting the argument order for these functions wrong.
+
+The in-kernel prototypes for the system call functions are defined in
+include/syscall.h. They use the same error reporting/return value
+handling as the rest of the kernel: the return value of the function
+is an error code (0 for success) and any additional integer return
+value to be returned from the system call (such as with read or write)
+is handed back as an additional pointer argument.
+
+The actual file syscall implementations live in the new file 
+kern/syscall/file_syscalls.c.
+
+open
+----
+sys_open needs to:
+   - check for invalid flags
+   - copy in the supplied pathname
+   - open the file (use openfile_open)
+   - place the file into curproc's file table (use filetable_place)
+
+read
+----
+sys_read needs to:
+   - translate the file descriptor number to an open file object
+     (use filetable_get)
+   - lock the seek position in the open file (but only for seekable objects)
+   - check for files opened write-only
+   - construct a struct: uio
+   - call VOP_READ
+   - update the seek position afterwards
+   - unlock and filetable_put()
+   - set the return value correctly
+
+Note: For simplicify, you do not need to consider contention from multiple processes.
+
+write
+-----
+sys_write is the same as sys_read except that it writes.
+
+close
+-----
+sys_close needs to:
+   - validate the fd number (use filetable_okfd)
+   - use filetable_placeat to replace curproc's file table entry with NULL
+   - check if the previous entry in the file table was also NULL
+     (this means no such file was open)
+   - decref the open file returned by filetable_placeat
+
+meld
+-----
+sys_meld needs to:
+   - copy in the supplied pathnames (pn1, pn2, and pn3)
+   - open the first two files (use openfile_open) for reading
+   - open the third file (use openfile_open) for writing
+   - return if any file is not open'ed correctly
+   - place them into curproc's file table (use filetable_place)
+   - refer to sys_read() for reading the first two files
+   - refer to sys_write() for writing the third file
+   - refer to sys_close() to complete the use of three files
+   - set the return value correctly for successful completion
