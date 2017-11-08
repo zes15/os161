@@ -1,7 +1,7 @@
 /*
  * File-related system call implementations.
  */
- 
+
 #include <types.h>
 #include <kern/errno.h>
 #include <kern/fcntl.h>
