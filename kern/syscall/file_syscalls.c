@@ -73,11 +73,38 @@ sys_read(int fd, userptr_t buf, size_t size, int *retval)
 /*
  * write() - write data to a file
  */
+int
+sys_write(int fd, userptr_t buf, size_t size, int *retval)
+{
+	int result = 0;
+	(void) fd;
+	(void) bf;
+	(void) size;
+	(void) retval;
+	return result;
+}
 
 /*
  * close() - remove from the file table.
  */
+int
+sys_close(int fd, int *retval)
+{
+	int result = 0;
+	(void) fd;
+	(void) retval;
+	return result;
+}
+
 
 /* 
 * meld () - combine the content of two files word by word into a new file
 */
+int
+sys_meld(int fd, int *retval)
+{
+	int result = 0;
+	(void) fd;
+	(void) retval;
+	return result;
+}
