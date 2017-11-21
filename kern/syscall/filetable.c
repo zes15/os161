@@ -134,7 +134,6 @@ filetable_okfd(struct filetable *ft, int fd)
 {
 	/* We have a fixed-size table so we don't need to check the size */
 	(void)ft;
-
 	return (fd >= 0 && fd < OPEN_MAX);
 }
 

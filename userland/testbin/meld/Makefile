@@ -1,10 +1,10 @@
-# Makefile for filetest
+# Makefile for meld
 
 TOP=../../..
 .include "$(TOP)/mk/os161.config.mk"
-PROG=filetest
+PROG=meld
 
-SRCS=filetest.c
+SRCS=meld.c
 BINDIR=/testbin
 
 .include "$(TOP)/mk/os161.prog.mk"
