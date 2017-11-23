@@ -97,7 +97,13 @@ main(int argc, char *argv[])
 	if(rv<0){ err(1, "%s: closing after meld", pn3); }
 	
 	/* display melded contents */
-	printf("\n%s now contains: %s\n", pn3, readbuf);
+	printf("\n%s now contains: %s\n\n", pn3, readbuf);
+
+	/* add a null char at the 17 byte to print the first 16 bytes */
+	readbuf[16] = '\0';
+
+	/* print the first 16 bytes as the writeup asks */
+	printf("The first 16 bytes of %s are: %s\n\n", pn3, readbuf);
 	
 	/* set return value for success */
 	return 0;
