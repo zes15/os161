@@ -42,8 +42,8 @@ sys_open(const_userptr_t upath, int flags, mode_t mode, int *retval)
 	size_t * actual;
 	size_t len;
 
-   	/* check for invalid flags */
-	if((allflags | flags) != allflags){
+   	/* check for invalid flags by testing if all bits are present */
+	if((flags & allflags) == allflags) {
 		*retval = -1;
 		return EINVAL; // return invalid argument code
 	}
