@@ -213,7 +213,7 @@ sys_write(int fd, userptr_t buf, size_t size, int *retval)
 	
 	//uio_kinit(&iov, &myuio, buf, size, of->of_offset, UIO_USERSPACE);
 
-   	/* call vop_write and check for results */
+   	/* call vop_write and check for errors */
 	result = VOP_WRITE(of->of_vnode, &myuio);
 	if(result != 0){
 		*retval = -1;
@@ -247,8 +247,6 @@ sys_close(int fd, int *retval)
 {
 	struct openfile * of;
 	
-	//kprintf("fd: %d\n", fd);
-
 	/* validate the fd number (use filetable_okfd) */
 	if(!filetable_okfd(curproc->p_filetable, fd)){
 		*retval = -1;
@@ -282,19 +280,24 @@ sys_meld(userptr_t pn1, userptr_t pn2, userptr_t pn3)
 {
 	const int FILNUM = 3;
 	const int READBUFLEN = 4;
+	int bufsize;
 
-	int retval[1];
-	*retval = -1;
-
+	int retval[FILNUM][1];
+	
 	int fd[FILNUM];
 	int result[FILNUM];
-	//int retval[FILNUM];
-	struct openfile * pn[FILNUM];
+	struct openfile * of[FILNUM];
 	size_t * actual[FILNUM];
 	size_t len[FILNUM];
 	char * kpath[FILNUM];
-
+	
+	/* buffer used to read 4 bytes at a time */
 	char readbuf[READBUFLEN];
+	
+	/* init retvals to -1 */
+	for(int i=0; i<FILNUM; i++) {
+		*retval[i] = -1;
+	}
 	
 	/* get path length for pn1, pn2, pn3 */
 	len[0] = strlen((char*)pn1) + 1;
@@ -314,51 +317,44 @@ sys_meld(userptr_t pn1, userptr_t pn2, userptr_t pn3)
 	result[2] = copyinstr(pn3, kpath[2], len[2], actual[2]);
 	
 	/* check for errors from copyinstr */
-	if(result[0] != 0 || result[1] != 0 || result[2] != 0){
-		//kfree(kpath);
-		//kfree(actual);
-		return -1;
-	}
+	if(result[0] != 0) return result[0];
+	else if(result[1] != 0) return result[1];
+	else if(result[2] != 0) return result[2];
 	
 	/* allocate space to open the files */
 	for(int i=0; i<FILNUM; i++) {
-		pn[i] = (struct openfile *)kmalloc(sizeof(struct openfile));
+		of[i] = (struct openfile *)kmalloc(sizeof(struct openfile));
 	}
 
 	/* open the first two files (use openfile_open) for reading */
-	result[0] = openfile_open(kpath[0], 0, O_RDONLY, &pn[0]);
-	result[1] = openfile_open(kpath[1], 0, O_RDONLY, &pn[1]);
-
+	result[0] = openfile_open(kpath[0], O_RDONLY, 444, &of[0]);
+	result[1] = openfile_open(kpath[1], O_RDONLY, 444, &of[1]);
+	
 	/* if pn1 or pn2 do not exist, return an error */	
-	if(result[0] != 0 || result[1] != 0){
-		//kfree(kpath);
-		//kfree(actual);
-		return ENOENT;
-	}
+	if(result[0] != 0 || result[1] != 0){ return ENOENT; }
 
 	/* increase the number of references for open files */
-	openfile_incref(pn[0]);
-	openfile_incref(pn[1]);
+	openfile_incref(of[0]);
+	openfile_incref(of[1]);
 
 	/* open the third file (use openfile_open) for writing */
-	result[2] = openfile_open(kpath[2], O_CREAT|O_EXCL, \
-		    O_WRONLY, &pn[2]);
-	
+	result[2] = openfile_open(kpath[2], O_RDWR|O_CREAT|O_EXCL|O_APPEND, \
+		    666, &of[2]);
 	/* O_CREATE|O_EXCL are used to throw errors if pn3 already
-	 * exists. Otherwise, the file will be created */
+	 * exists. Otherwise, the file will be created. O_APPEND causes
+	 * all write operations to write the data to the end of the file */
+
 	
 	/* if pn3 exists, return an error */
-	if(result[2] != 0){
-		return EEXIST;
-	}
+	if(result[2] != 0){ return result[2]; }
 
 	/* increase the number of references for open files */
-	openfile_incref(pn[2]);
+	openfile_incref(of[2]);
 
 	/* return if any file is not open'ed correctly */
-	if((pn[0]->of_accmode != O_RDONLY) || \
-	  (pn[1]->of_accmode != O_RDONLY) || \
-	  (pn[2]->of_accmode == O_WRONLY)) {
+	if((of[0]->of_accmode == O_WRONLY) || \
+	  (of[1]->of_accmode == O_WRONLY) || \
+	  (of[2]->of_accmode == O_RDONLY)) {
 		return EFTYPE;
 	}	
 
@@ -366,7 +362,7 @@ sys_meld(userptr_t pn1, userptr_t pn2, userptr_t pn3)
 	 * descriptors using filetable_place and then check
 	 * for results. */
 	for(int i=0; i<FILNUM; i++) {
-		result[i] = filetable_place(curproc->p_filetable, pn[i], \
+		result[i] = filetable_place(curproc->p_filetable, of[i], \
 			    &fd[i]);
 	}
 
@@ -375,68 +371,85 @@ sys_meld(userptr_t pn1, userptr_t pn2, userptr_t pn3)
 	else if(result[1] != 0) return result[1];
 	else if(result[2] != 0) return result[2];
 
-	/* init read buffer to zeros */
-	for(int i=0; i<READBUFLEN; i++) {
-		readbuf[i] = 0;
-	}
-
 	/* AND NOW, FOR THE MELDING PROCESS! */
-
+	
 	/* read until files are empty */
-	while(1) {
+	while(*retval[0] != 0 && *retval[1] != 0) {
+
+		/* empty read buffer */
+		for(int i=0; i<READBUFLEN; i++) { readbuf[i] = 0; }
+		bufsize = READBUFLEN;
+	
 		/* read 4 bytes from file 1 */
 		result[0] = sys_read(fd[0], (userptr_t)readbuf, \
-			    READBUFLEN, retval);
+			    READBUFLEN, retval[0]);
+	
 		/* check for reading errors */
-		if(result[0] != 0) {
-			return result[0];
+		if(result[0] != 0) { return result[0]; }
+
+		/* get length of buffer so we can read however many
+		 * bytes we need without file1 or file2 needing to be
+		 * padded with additional bytes. */
+		if(readbuf[3] == 0) { bufsize = 3; }
+		if(readbuf[2] == 0) { bufsize = 2; }
+		if(readbuf[1] == 0) { bufsize = 1; }
+		if(readbuf[0] == 0) { bufsize = 0; }
+
+		//kprintf("--%s--\n", readbuf);
+
+		/* only write when there is data to read */
+		if(bufsize != 0) {
+			/* write 4 bytes from file 1 to file 3 */
+			result[2] = sys_write(fd[2], (userptr_t)readbuf, \
+				    bufsize, retval[2]);
+			/* check for writing errors */
+			if(result[2] != 0) { return result[2]; }
 		}
-		/* check if EOF */
-		if(*retval == 0) break;
-		/* write to file 3 */
-		result[2] = sys_write(fd[2], (userptr_t)readbuf, \
-			    READBUFLEN, NULL);
-		/* check for writing errors */
-		if(result[2] != 0) {
-			return result[2];
-		}
+	
+		/* empty read buffer */
+		for(int i=0; i<READBUFLEN; i++) { readbuf[i] = 0; }
+		bufsize = READBUFLEN;
+		
 		/* read 4 bytes from file 2 */
 		result[1] = sys_read(fd[1], (userptr_t)readbuf, \
-			    READBUFLEN, retval);
-		/* check if EOF */
-		if(*retval == 0) break;
+			    READBUFLEN, retval[1]);
+		
 		/* check for reading errors */
-		if(result[1] != 0) {
-			return result[1];
+		if(result[1] != 0) { return result[1]; }
+
+		/* get length of buffer so we can read however many
+		 * bytes we need without file1 or file2 needing to be
+		 * padded with additional bytes. */
+		if(readbuf[3] == 0) { bufsize = 3; }
+		if(readbuf[2] == 0) { bufsize = 2; }
+		if(readbuf[1] == 0) { bufsize = 1; }
+		if(readbuf[0] == 0) { bufsize = 0; }
+		
+		/* only write when there is data to read */
+		if(bufsize != 0){
+			/* write 4 bytes from file 2 to file 3 */
+			result[2] = sys_write(fd[2], (userptr_t)readbuf, \
+				    bufsize, retval[2]);
+			/* check for writing errors */
+			if(result[2] != 0) { return result[2]; }
 		}
-		/* write to file 3 */
-		result[2] = sys_write(fd[2], (userptr_t)readbuf, \
-			    READBUFLEN, NULL);
-		/* check for writing errors */
-		if(result[2] != 0) {
-			return result[2];
-		}		
 	}
 
 	/* use sys_close() to complete the use of the three files */
-	result[0] = sys_close(fd[0], NULL);
-	if(result[0] != 0) {
-		return result[0];
-	}
-	result[1] = sys_close(fd[1], NULL);
-	if(result[1] != 0) {
-		return result[1];
-	}
-	result[2] = sys_close(fd[2], NULL);
-	if(result[2] != 0) {
-		return result[2];
-	}
-   
-	/* deallocate our resources */
+	result[0] = sys_close(fd[0], retval[0]);
+	result[1] = sys_close(fd[1], retval[1]);
+	result[2] = sys_close(fd[2], retval[2]);
+
+	/* check for closing errors */
+	if(result[0] != 0) { return result[0]; }
+	else if(result[1] != 0) { return result[1]; }
+	else if(result[2] != 0) { return result[2]; }
+   	
+	/* finally, we can deallocate our resources */
 	for(int i=0; i<FILNUM; i++) {
 		kfree(kpath[i]);
 		kfree(actual[i]);
-		openfile_decref(pn[i]);
+		openfile_decref(of[i]);
 	}
 
 	/* set the return value correctly for success */
