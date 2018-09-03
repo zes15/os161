@@ -1,3 +1,9 @@
+# OS-161
+## A Harvard OS built on C and MIPS
+### NEW SYSCALLS AND FEATURES ADDED
+
+
+
 1. These tools (gmp, mpfr, libmpc, and ncurses) are needed for GCC and GDB installation. On rpm systems such as CentOS, you can run this command as root
 # yum install gmp-devel mpfr-devel libmpc-devel ncurses-devel 
 
